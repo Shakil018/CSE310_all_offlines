@@ -30,6 +30,10 @@ FILE *in_file;
 FILE *log_file;
 FILE *error_file;
 
+FILE *code_file;
+FILE *optimized_file;
+
+
 
 
 
@@ -38,7 +42,7 @@ string newLabel()
 {
 	
 	string label = "L";
-	label += lable_count;
+	label += to_string(label_count);
 
 	label_count++;
 
@@ -57,9 +61,13 @@ string newLabel()
 string newTemp()
 {
 	string temp = "t";
-	temp += temp_count;
+	temp += to_string(temp_count);
 
 	temp_count++;
+
+
+	cout<<endl<<"new temp is : "<<temp<<endl;
+
 
 	return temp;
 
@@ -89,7 +97,9 @@ vector<VarInfo> var_dec_list;
 vector<Parameter> param_list;
 vector<string> arg_list;
 
-vector<string> asm_param_list;
+vector<string> send_arg_list;
+vector<string> receive_arg_list;
+
 
 vector<string> data_segment;
 bool valid_func = false;
@@ -123,7 +133,7 @@ void insert_func(VarInfo var)
 }
 
 
-void insert_variable(VarInfo var)
+string insert_variable(VarInfo var)
 {
 	SymbolInfo *symbol = new SymbolInfo(var.var_name, "ID");
 
@@ -145,9 +155,13 @@ void insert_variable(VarInfo var)
 	else if(var.var_type == "arr") {
 
 		asm_var_name += " dw ";
-		asm_var_name += var.var_size + " dup (?)";
+		asm_var_name += to_string(var.var_size) + " dup (?)";
+
 
 		data_segment.push_back(asm_var_name);
+
+		cout<<"ARRAY:  "<<data_segment.back()<<endl;
+
 	}
 
 
@@ -191,7 +205,8 @@ void insert_variable(VarInfo var)
 %%
 start : program {
 		$$ = new SymbolInfo($1->getName(), "PRODUCTION_RULE");
-		fprintf(log_file, "Line ", dfdfdfddfdfdfdfddfdfdf)
+		
+		//fprintf(log_file, "Line ", dfdfdfddfdfdfdfddfdfdf)
 
 		fprintf(log_file, "Line %d: start : program\n\n", line_count);
 	
@@ -209,7 +224,8 @@ start : program {
 
 			data_segment.clear();
 
-			asm_code += "\n\tmem_add dw 0\n\t num dw ?\n\t multiplier dw 10d\n";
+			asm_code += "\n\tmem_add dw 0\n\tnum dw ?\n\tmultiplier dw 10d\n";
+			asm_code += "\n\tNEWLINE DB 0DH, 0AH, '$'\n";
 
 			asm_code += "\n.code\n\n";
 			asm_code += $1->code;
@@ -219,20 +235,22 @@ start : program {
 
 			asm_code += "println proc\n";
 			asm_code += "\tpop mem_add\n\tpop num\n";
-			asm_code += "\t push ax\n\t push bx\n\t push cx\n\t push dx\n";
+			asm_code += "\tpush ax\n\t push bx\n\t push cx\n\t push dx\n";
 
-			asm_code += "\t mov cx, 0d\n push_stack:\n\tmov ax, bx\npush_stack_flow:\n";
-			asm_code += "\tmov xor dx, dx\n\tdiv multiplier\n\t mov bx, ax\n\tpush dx\n\t inc cx\n\tcmp bx, 0d\n\tjz print_num\n\tjmp push_stack\n\n";
+			asm_code += "\tmov cx, 0d\n\tmov bx, num\ntest num, 8000h\n\tjz push_stack\n\tneg bx\n"; 
+			asm_code += "push_stack:\n\tmov ax, bx\npush_stack_flow:\n";
+			asm_code += "\txor dx, dx\n\tdiv multiplier\n\tmov bx, ax\n\tpush dx\n\tinc cx\n\tcmp bx, 0d\n\tjz check_sign\n\tjmp push_stack\n\n";
+			asm_code += "check_sign:\n\ttest num, 8000h\n\tjz print_num\n\tmov ah, 2\n\tmov dl, '-'\n\tint 21h\n";
 			asm_code += "print_num:\n\tcmp cx, 0d\n\tjz print_proc_end\n\tpop bx\n\t dec cx\n";
 			asm_code += "\tmov ah, 2\n\tadd bx, 30h\n\tmov dx, bx\n\tint 21h\n\tjmp print_num\n";
-			asm_code += "print_proc_end:\n\tmov ah,2\n\tmov dl, ' '\n\tint 21h\n\tmov dl, ' '\n\tint 21h\n";
+			asm_code +=  "print_proc_end:\n\tlea dx, NEWLINE\n\t mov ah, 9\n\tint 21h\n";
 			asm_code += "\n\t pop dx\n\tpop cx\n\tpop bx\n\tpop ax\n\tpush mem_add\n\tret\n\nprintln endp\n\n";
 
 			asm_code += "end main\n";
 
 			$$->code += asm_code;
 			fprintf(code_file, "%s", $$->code.c_str());
-			fprintf(optimized_file, "%s", $$->optimized_code.c_str() );
+			//fprintf(optimized_file, "%s", $$->optimized_code.c_str() );
 
 
 		}
@@ -248,7 +266,7 @@ program : program unit {
 		fprintf(log_file, "Line %d: program : program unit\n\n", line_count);
 		fprintf(log_file, "%s %s\n\n", $1->getName().c_str(), $2->getName().c_str());
 
-
+		$$->code += $1->code + $2->code;
 
 
 	}
@@ -258,6 +276,8 @@ program : program unit {
 		fprintf(log_file, "Line %d: program : unit\n\n", line_count);
 		fprintf(log_file, "%s\n\n", $1->getName().c_str());
 
+
+		$$->code += $1->code;
 
 	}
 
@@ -369,8 +389,9 @@ func_definition : type_specifier id id_name_type LPAREN parameter_list RPAREN fu
 
 			$$->code += "main proc\n\tmov ax, @data\n\tmov ds, ax\n\n";
 			$$->code += $8->code;
-			$$->code += "\n\tmov ah, 4ch\n\tint 21h\n\nmainendp\n\n";
+			$$->code += "\n\tmov ah, 4ch\n\tint 21h\n\nmain  endp\n";
 
+			valid_func = false;
 		}
 
 		else{
@@ -381,10 +402,10 @@ func_definition : type_specifier id id_name_type LPAREN parameter_list RPAREN fu
 				$$->code += "\n\t; " + $2->getName() + " proc begins here\n\n";
 
 
-				$$->code += $2->getName() + "proc\n\t pop mem_add\n";
+				$$->code += $2->getName() + " proc\n\t pop mem_add\n";
 
-				for(int i = asm_param_list.size()-1; i >= 0; i--){
-					$$->code += "\tpop" + " " + asm_param_list[i] + "\n"; 
+				for(int i = receive_arg_list.size()-1; i >= 0; i--){
+					$$->code += "\tpop " + receive_arg_list[i] + "\n"; 
 				}
 
 				$$->code += "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n";	
@@ -401,7 +422,7 @@ func_definition : type_specifier id id_name_type LPAREN parameter_list RPAREN fu
 		}
 
 		valid_func = false;
-		asm_param_list.clear();
+		receive_arg_list.clear();
 
 
 
@@ -424,9 +445,10 @@ func_definition : type_specifier id id_name_type LPAREN parameter_list RPAREN fu
 
 
 			$$->code += "main proc\n\tmov ax, @data\n\tmov ds, ax\n\n";
-			$$->code += $8->code;
-			$$->code += "\n\tmov ah, 4ch\n\tint 21h\n\nmainendp\n\n";
+			$$->code += $7->code;
+			$$->code += "\n\tmov ah, 4ch\n\tint 21h\n\nmain endp\n\n";
 
+			valid_func = false;
 		}
 
 		else{
@@ -437,11 +459,11 @@ func_definition : type_specifier id id_name_type LPAREN parameter_list RPAREN fu
 				$$->code += "\n\t; " + $2->getName() + " proc begins here\n\n";
 
 
-				$$->code += $2->getName() + "proc\n\t pop mem_add\n";
+				$$->code += $2->getName() + " proc\n\t pop mem_add\n";
 
 				$$->code += "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n";	
 
-				$$->code += $8->code;
+				$$->code += $7->code;
 
 				$$->code += "\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n\n\tpush mem_add\n\tret\n";
 
@@ -453,7 +475,7 @@ func_definition : type_specifier id id_name_type LPAREN parameter_list RPAREN fu
 		}
 
 		valid_func = false;
-		asm_param_list.clear();
+		receive_arg_list.clear();
 
 
 	}
@@ -729,7 +751,7 @@ scope_in : {
 
 			string asm_var_name = insert_variable(temp_var);
 
-			asm_param_list.push_back(asm_var_name);
+			receive_arg_list.push_back(asm_var_name);
 
 		}
 
@@ -1099,9 +1121,9 @@ statement : var_declaration {
 		fprintf(log_file, "for(%s%s%s) %s\n\n", exp1.c_str(), exp2.c_str(), exp3.c_str(), $7->getName().c_str() );
 
 
-		if(error_count == 0 && $4->getName != ";" && $5->getName() != ";")
+		if(error_count == 0 && $4->getName() != ";" && $5->getName() != ";")
 		{
-			$$->code += "; for(" + $3->getName() + "; " + $4->getName + "; " + $5->getName() + ")\n";
+			$$->code += "; for(" + $3->getName() + "; " + $4->getName() + "; " + $5->getName() + ")\n";
 
 			string loop_label = newLabel();
 			string exit_label = newLabel();
@@ -1111,13 +1133,14 @@ statement : var_declaration {
 			$$->code += $3->code;
 
 			$$->code += loop_label + ":\n";
-			$$->code += "mov ax, " + condition + "\n";
-			$$->code += "cmp ax, 0\n";
-			$$->code += "je " + exit_label + "\n";
+			$$->code += $4->code;
+			$$->code += "\tmov ax, " + $4->getSymbol() + "\n";
+			$$->code += "\tcmp ax, 0\n";
+			$$->code += "\tje " + exit_label + "\n";
 			$$->code += $7->code;
 
 			$$->code += $5->code;
-			$$->code += "jmp" + " " + loop_label + "\n";
+			$$->code += "\tjmp " + loop_label + "\n";
 
 			$$->code += exit_label + ":\n";
 
@@ -1154,14 +1177,14 @@ statement : var_declaration {
 			$$->code += "; if(" + $3->getName() + ")\n"; 
 
 
-			string label = newLabel();
+			string exit_label = newLabel();
 
-
-			$$->code += "mov ax, "+$3->getSymbol()+"\n";
-			$$->code += "cmp ax, 0\n";
-			$$->code += "je "+string(label)+"\n";
+			$$->code += $3->code;
+			$$->code += "\tmov ax, "+$3->getSymbol()+"\n";
+			$$->code += "\tcmp ax, 1\n";
+			$$->code += "jne "+ exit_label +"\n";
 			$$->code += $5->code;
-			$$->code += string(label)+":\n";
+			$$->code += exit_label +":\n";
 			
 			// $$->setSymbol("if"); //not necessary
 
@@ -1194,17 +1217,16 @@ statement : var_declaration {
 
 			$$->code += "; if(" + $3->getName() + ")\n"; 
 
-
-			$$->code += "mov ax, "+$3->getSymbol()+"\n";
-			$$->code += "cmp ax, 0\n";
-			$$->code += "je "+string(else_label)+"\n";
+			$$->code += $3->code;
+			$$->code += "\tmov ax, "+$3->getSymbol()+"\n";
+			$$->code += "\tcmp ax, 1\n";
+			$$->code += "\tjne " + else_label +"\n";
 			$$->code += $5->code;
-			$$->code += "jmp" + " " + exit_label + "\n";
-			$$->code += else_label+":\n";
+			$$->code += "\tjmp " + exit_label + "\n";
+			$$->code += else_label + ":\n";
 			$$->code += $7->code;
-			$$->code += exit_label + ":\n"
+			$$->code += exit_label + ":\n";
 			
-			// $$->setSymbol("if"); //not necessary
 
 		}
 
@@ -1229,6 +1251,23 @@ statement : var_declaration {
 		fprintf(log_file, "while (%s)%s\n\n", $3->getName().c_str(), $5->getName().c_str());
 
 
+		if(error_count == 0)
+		{
+			string loop_label = newLabel();
+			string exit_label = newLabel();
+
+
+			$$->code += loop_label + ":\n";
+			$$->code += $3->code;
+
+			$$->code += "\tmov ax, " + $3->getSymbol() + "\n\tcmp ax, 0\n\tje " + exit_label + "\n";
+			$$->code += $5->code;
+			$$->code += "\tjmp " + loop_label + "\n" + exit_label + ":\n";
+
+		}
+
+
+
 	}
 	  | PRINTLN LPAREN ID RPAREN SEMICOLON {
 
@@ -1238,6 +1277,8 @@ statement : var_declaration {
 
 		SymbolInfo *symbol = symboltable->lookup($3->getName());
 
+		string argument_pass = "";
+
 		if(symbol == NULL)
 		{
 			fprintf(log_file, "Error at line %d: Undeclared variable %s\n\n", line_count, $3->getName().c_str() );
@@ -1246,10 +1287,23 @@ statement : var_declaration {
 			error_count++;
 
 		}
+		else{
+			if(symbol->getSelfType() != "void")
+			{
+				argument_pass = symbol->getSymbol();
+			}
+		}
 
 		$$->setSelfType("int");
 		
 		fprintf(log_file, "printf(%s);\n\n", $3->getName().c_str() );
+
+
+		if(error_count == 0)
+		{
+			$$->code += "\tpush " + argument_pass + "\n\tcall println\n";
+		}
+
 
 	}
 	  | RETURN expression SEMICOLON {
@@ -1270,6 +1324,12 @@ statement : var_declaration {
 		fprintf(log_file, "return %s;\n\n", $2->getName().c_str() );
 
 
+		if(error_count == 0)
+		{
+			$$->code += $2->code;
+			$$->code += "\tpush " + $2->getSymbol() + "\n";
+		}
+
 
 	}
 	  ;
@@ -1285,6 +1345,8 @@ expression_statement 	: SEMICOLON {
 
 		$$->setSelfType(self_type);
 
+		$$->setSymbol(";");
+
 	}
 			| expression SEMICOLON {
 
@@ -1297,6 +1359,9 @@ expression_statement 	: SEMICOLON {
 
 		$$->setSelfType(self_type);
 
+		$$->code += $1->code;
+		$$->setSymbol($1->getSymbol());
+
 	}
 			;
 
@@ -1308,6 +1373,9 @@ variable : ID {
 
 		SymbolInfo *symbol = symboltable->lookup($1->getName());
 
+		$$->setVarType("var");
+
+
 		if(symbol == NULL)
 		{
 			fprintf(log_file, "Error at line %d: Undeclared variable %s\n\n", line_count, $1->getName().c_str() );
@@ -1315,6 +1383,7 @@ variable : ID {
 
 			error_count++;
 			$$->setSelfType("int");    //default for all undelcared types
+
 		}
 		else {
 			if(symbol->getVarType() != "var"){
@@ -1342,6 +1411,10 @@ variable : ID {
 				}
 				else{
 					$$->setSelfType(symbol->getSelfType());
+					$$->setSymbol(symbol->getSymbol());
+
+					cout<<"the symbol is : "<<symbol->getSymbol()<<endl;
+
 				}
 			}
 
@@ -1357,6 +1430,8 @@ variable : ID {
 
 
 		SymbolInfo *symbol = symboltable->lookup($1->getName());
+		$$->setVarType("arr");
+
 
 		if(symbol == NULL)
 		{
@@ -1366,6 +1441,9 @@ variable : ID {
 			fprintf(error_file, "Error at line %d: Undeclared array %s\n\n", line_count, $1->getName().c_str() );
 			error_count++;
 			$$->setSelfType("int");    //default for all undelcared types
+			
+			$$->setVarSize(0);
+
 
 		}
 		else{
@@ -1391,14 +1469,26 @@ variable : ID {
 
 			if(symbol->getSelfType() == "void"){
 				$$->setSelfType("int");
+				$$->setVarSize(0);
 			}
 			else{
 				$$->setSelfType(symbol->getSelfType());
+				$$->setVarSize(symbol->getVarSize());
+				$$->setSymbol(symbol->getSymbol());
 
 			}
 		}
 
 		fprintf(log_file, "%s[%s]\n\n", $1->getName().c_str(), $3->getName().c_str() );
+
+
+		if(error_count == 0)
+		{
+			$$->code += $3->code;
+			$$->code += "\n\tmov si, " + $3->getSymbol() + "\n\tadd si, si\n";
+
+		}
+
 
 
 	}
@@ -1413,6 +1503,9 @@ variable : ID {
 
 		$$->setSelfType($1->getSelfType());
 
+		$$->code += $1->code;
+		$$->setSymbol($1->getSymbol());
+
 
 	}
 	   | variable ASSIGNOP logic_expression {
@@ -1421,6 +1514,9 @@ variable : ID {
 		fprintf(log_file, "Line %d: expression : variable ASSIGNOP logic_expression\n\n", line_count);
 
 
+		cout<<"assigning " + $1->getName() + " = " + $3->getName()<<endl;
+		cout<<"vars er symbol "<<$1->getSymbol()<<endl;
+		cout<<"logics exp er getSymbol : "<<$3->getSymbol()<<", code: "<<$3->code<<endl;
 
 		if($3->getSelfType() == "void"){
 
@@ -1451,6 +1547,33 @@ variable : ID {
 		fprintf(log_file, "%s=%s\n\n", $1->getName().c_str(), $3->getName().c_str() );
 
 
+
+		cout<<"vars getvartype : " + $1->getVarType()<<endl;
+
+		if(error_count == 0)
+		{
+			if($1->getVarType() == "var")
+			{
+				cout<<"variable is var"<<endl;
+
+				$$->code += $1->code + $3->code;
+				$$->code += "\n\tmov bx, " + $3->getSymbol() + "\n";
+				$$->code += "\tmov " + $1->getSymbol() + ", bx\n";
+				$$->setSymbol($1->getSymbol());
+
+			}
+			else if($1->getVarType() == "arr")
+			{
+				string temp_asm_var = newTemp();
+				data_segment.push_back(temp_asm_var + " dw ?");
+				$$->code += $3->code + $1->code + "\mov bx, " + $3->getSymbol() + "\n";
+				$$->code += "\mov " + $1->getSymbol() + "[si], bx\n\t mov " + temp_asm_var + ", bx\n";
+				$$->setSymbol(temp_asm_var);
+			}
+		}
+
+
+
 	}
 	   ;
 
@@ -1462,6 +1585,9 @@ logic_expression : rel_expression {
 		fprintf(log_file, "%s\n\n", $1->getName().c_str() );
 
 		$$->setSelfType($1->getSelfType());
+
+		$$->setSymbol($1->getSymbol());
+		$$->code += $1->code;
 
 
 	}
@@ -1496,6 +1622,37 @@ logic_expression : rel_expression {
 
 		fprintf(log_file, "%s%s%s\n\n", $1->getName().c_str(), $2->getName().c_str(), $3->getName().c_str() );
 
+
+		if(error_count == 0)
+		{
+			$$->code += $1->code + $3->code;
+
+			string temp_asm_var = newTemp();
+			data_segment.push_back(temp_asm_var + " dw ?");
+
+
+			string true_false_label = newLabel();
+			string exit_label = newLabel();
+
+
+			if($2->getName() == "||")
+			{
+				$$->code += "\n\tmov ax, " + $1->getSymbol() + "\n\tcmp ax, 0\n\tjne "+true_false_label + "\n";
+				$$->code += "\tmov ax, " + $3->getSymbol() + "\n\tcmp ax, 0\n\tjne " + true_false_label + "\n";
+				$$->code += "\tmov " + temp_asm_var + ", 0\n\tjmp " + exit_label + "\n";
+				$$->code += true_false_label + ": \n\tmov " + temp_asm_var + ", 1\n" + exit_label + ":\n";
+			}
+			else if($2->getName() == "&&")
+			{
+				$$->code += "\n\tmov ax, " + $1->getSymbol() + "\n\tcmp ax, 0\n\tje " + true_false_label + "\n";
+				$$->code += "\tmov ax, " + $3->getSymbol() + "\n\tcmp ax, 0\n\tje " + true_false_label + "\n";
+				$$->code += "\tmov " + temp_asm_var + ", 1\n\tjmp " + exit_label + "\n";
+				$$->code += true_false_label + ": \n\tmov " + temp_asm_var + ", 0\n" + exit_label + ":\n";
+			}
+
+			$$->setSymbol(temp_asm_var);
+		}
+
 	}
 		 ;
 
@@ -1507,6 +1664,10 @@ rel_expression	: simple_expression {
 		fprintf(log_file, "%s\n\n", $1->getName().c_str() );
 
 		$$->setSelfType($1->getSelfType());
+
+		$$->code += $1->code;
+		
+		$$->setSymbol($1->getSymbol());
 
 	}
 		| simple_expression RELOP simple_expression {
@@ -1539,6 +1700,58 @@ rel_expression	: simple_expression {
 
 
 
+
+
+
+		if(error_count == 0)
+		{
+
+
+
+			$$->code += $1->code + $3->code;
+			$$->code += "\n\tmov ax, " + $1->getSymbol() + "\n\tmov bx, " + $3->getSymbol() + "\n";
+			$$->code += "\tcmp ax, bx\n";
+
+			string jmp_label = newLabel();
+			string exit_label = newLabel();
+			string temp_asm_var = newTemp();
+
+			data_segment.push_back(temp_asm_var + " dw ?");
+
+
+			if($2->getName() == ">")
+			{
+				$$->code += "\tjg " + jmp_label + "\n\tmov " + temp_asm_var + ", 0\n\tjmp " + exit_label + "\n";
+				$$->code += jmp_label + ": \n\tmov " + temp_asm_var + ", 1\n" + exit_label + ": \n";
+			}
+			else if($2->getName() == ">=")
+			{
+				$$->code += "\jge " + jmp_label + "\n\tmov " + temp_asm_var + ", 0\n\tjmp " + exit_label + "\n";
+				$$->code += jmp_label + ": \n\tmov " + temp_asm_var + ", 1\n" + exit_label + ": \n";
+
+			}
+			else if($2->getName() == "<")
+			{
+				$$->code += "\tjl " + jmp_label + "\n\tmov " + temp_asm_var + ", 0\n\tjmp " + exit_label + "\n";
+				$$->code += jmp_label + ": \n\tmov " + temp_asm_var + ", 1\n" + exit_label + ": \n";
+			}
+			else if($2->getName() == "<=")
+			{
+				$$->code += "\tjle " + jmp_label + "\n\tmov " + temp_asm_var + ", 0\n\tjmp " + exit_label + "\n";
+				$$->code += jmp_label + ": \n\tmov " + temp_asm_var + ", 1\n" + exit_label + ": \n";
+			}
+			else if($2->getName() == "!=")
+			{
+				$$->code += "\tjne " + jmp_label + "\n\tmov " + temp_asm_var + ", 0\n\tjmp " + exit_label + "\n";
+				$$->code += jmp_label + ": \n\tmov " + temp_asm_var + ", 1\n" + exit_label + ": \n";
+			}
+
+			$$->setSymbol(temp_asm_var);
+
+		}
+
+
+
 	}
 		;
 
@@ -1550,6 +1763,10 @@ simple_expression : term {
 		fprintf(log_file, "%s\n\n", $1->getName().c_str() );
 
 		$$->setSelfType($1->getSelfType());
+
+
+		$$->code += $1->code;
+		$$->setSymbol($1->getSymbol());
 
 	}
 		  | simple_expression ADDOP term {
@@ -1591,6 +1808,34 @@ simple_expression : term {
 		fprintf(log_file, "%s%s%s\n\n", $1->getName().c_str(), $2->getName().c_str(), $3->getName().c_str() );
 
 
+
+
+
+
+		if(error_count == 0)
+		{
+
+			string temp_asm_var = newTemp();
+			data_segment.push_back(temp_asm_var + " dw ?");
+
+
+			$$->code += $1->code + $3->code;
+
+			$$->code += "\n\tmov ax, " + $1->getSymbol() + "\n"; 
+			
+			if($2->getName() == "+")
+			{
+				$$->code += "\tadd ax, " + $3->getSymbol() + "\n\tmov " + temp_asm_var + ", ax\n";
+			}
+			else
+			{
+				$$->code += "\tsub ax, " + $3->getSymbol() + "\n\tmov " + temp_asm_var + ", ax\n";
+			}
+
+			$$->setSymbol(temp_asm_var);
+		}
+
+
 	}
 		  ;
 
@@ -1602,6 +1847,10 @@ term :	unary_expression {
 		fprintf(log_file, "%s\n\n", $1->getName().c_str() );
 
 		$$->setSelfType($1->getSelfType());
+
+
+		$$->code += $1->code;
+		$$->setSymbol($1->getSymbol());
 
 	}
      |  term MULOP unary_expression {
@@ -1684,6 +1933,39 @@ term :	unary_expression {
 		fprintf(log_file, "%s%s%s\n\n", $1->getName().c_str(),  $2->getName().c_str(), $3->getName().c_str() );
 
 
+
+
+		if(error_count == 0)
+		{
+			
+			$$->code += $1->code + $3->code;
+
+			string temp_asm_var = newTemp();
+			data_segment.push_back(temp_asm_var + " dw ?");
+
+			if($2->getName() == "*")
+			{
+				$$->code += "\tmov ax, " + $1->getSymbol() + "\n\tmov bx, " + $3->getSymbol() + "\n\timul bx\n";
+				$$->code += "\tmov " + temp_asm_var + ", ax\n";
+			}
+			else if($2->getName() == "/")
+			{
+				$$->code += "\tmov ax, " + $1->getSymbol() + "\n\tcwd\n";
+				$$->code += "\tmov bx, " + $3->getSymbol();
+				$$->code += "\tidiv bx\n\tmov " + temp_asm_var + ", ax\n";
+			}
+			else 
+			{
+				$$->code += "\tmov ax, " + $1->getSymbol() + "\n\tcwd\n";
+				$$->code += "\tmov bx, " + $3->getSymbol();
+				$$->code += "\tidiv bx\n\tmov " + temp_asm_var + ", dx\n";
+			}
+
+			$$->setSymbol(temp_asm_var);
+
+		}
+
+
 	}
      ;
 
@@ -1691,6 +1973,8 @@ unary_expression : ADDOP unary_expression {
 
 		$$ = new SymbolInfo($1->getName() + $2->getName(), "PRODUCTION_RULE");
 		fprintf(log_file, "Line %d: unary_expression : ADDOP unary_expression\n\n", line_count);
+
+		cout<<"in unary_expression: addop unary_expression"<<endl;
 
 
 		if($2->getSelfType() == "void"){
@@ -1705,6 +1989,34 @@ unary_expression : ADDOP unary_expression {
 		$$->setSelfType($2->getSelfType());
 
 		fprintf(log_file, "%s%s\n\n", $1->getName().c_str(), $2->getName().c_str() );
+
+
+		if(error_count == 0)
+		{
+			if($1->getName() == "-")
+			{
+				string temp_asm_var = newTemp();
+				data_segment.push_back(temp_asm_var + " dw ?");
+
+				cout<<"temp var name: "<<temp_asm_var<<endl;
+				
+
+				cout<<"in getname - "<<endl;
+				cout<<"data segment push: "<<endl;
+				cout<<data_segment.back()<<endl;
+
+				$$->code += $2->code;
+				$$->code += "\tmov bx, " + $2->getSymbol() + "\n\tneg bx\n\tmov " + temp_asm_var + ", bx\n";
+				$$->setSymbol(temp_asm_var);
+			}
+			else 
+			{
+				$$->code = $2->code;
+				$$->setSymbol($2->getSymbol());
+			}
+		}
+
+		
 
 
 	}
@@ -1728,6 +2040,23 @@ unary_expression : ADDOP unary_expression {
 		fprintf(log_file, "!%s\n\n", $2->getName().c_str() );
 
 
+		if(error_count == 0)
+		{
+			string temp_asm_var = newTemp();
+			data_segment.push_back(temp_asm_var + " dw ?");
+
+			string reset_label = newLabel();
+			string exit_label = newLabel();
+
+			$$->code = $2->code;
+			$$->code += "\tmov ax, " + $2->getSymbol() + "\n\tcmp ax, 1\n";
+			$$->code += "\tje " + reset_label + "\n\tmov " + temp_asm_var + ", 1\n\tjmp " + exit_label + "\n";
+			$$->code += reset_label + ": \n\tmov " + temp_asm_var + ", 0\n" + exit_label + ": \n";
+
+			$$->setSymbol(temp_asm_var); 
+		}
+
+
 
 	}
 		 | factor {
@@ -1738,6 +2067,9 @@ unary_expression : ADDOP unary_expression {
 		fprintf(log_file, "%s\n\n", $1->getName().c_str() );
 
 		$$->setSelfType($1->getSelfType());
+
+		$$->code += $1->code;
+		$$->setSymbol($1->getSymbol());
 
 	}
 		 ;
@@ -1751,12 +2083,29 @@ factor	: variable {
 
 		$$->setSelfType($1->getSelfType());
 
+		$$->setVarType($1->getVarType());
+		$$->setVarSize($1->getVarSize());
+
+		$$->code += $1->code;
+		$$->setSymbol($1->getSymbol());
+
+		if($1->getVarType() == "arr")
+		{
+			string temp_asm_var = newTemp();
+			data_segment.push_back(temp_asm_var + " dw ?");
+
+			$$->code += "\t mov bx, " + $1->getSymbol() + "[si]\n\tmov " + temp_asm_var + ", bx\n";
+			$$->setSymbol(temp_asm_var);
+		}
+
 	}
 	| ID LPAREN argument_list RPAREN {
 
 		$$ = new SymbolInfo($1->getName() + "(" + $3->getName() + ")", "PRODUCTION_RULE");
 		fprintf(log_file, "Line %d: factor : ID LPAREN argument_list RPAREN\n\n", line_count);
 
+
+		bool valid = false;
 
 
 		SymbolInfo *symbol = symboltable->lookup($1->getName());
@@ -1783,6 +2132,9 @@ factor	: variable {
 			}
 			else{
 				if(symbol->getParamLen() == 1 && symbol->getParamAt(0).param_type == "void" && arg_list.size() == 0){
+					
+					valid = true;
+
 					$$->setSelfType(symbol->getSelfType());
 				}
 				else if(symbol->getParamLen() != arg_list.size()){
@@ -1812,6 +2164,7 @@ factor	: variable {
 					}
 
 					if(!mismatch){
+						valid = true;
 						$$->setSelfType(symbol->getSelfType());
 					}
 				}
@@ -1819,6 +2172,33 @@ factor	: variable {
 
 		}
 
+		if(valid && error_count == 0)
+		{
+			string temp_asm_var = newTemp();
+			data_segment.push_back(temp_asm_var + " dw ?");
+
+			$$->code += $3->code;
+
+			$$->code += "\tpush mem_add\n";
+
+			for(int i = 0; i < send_arg_list.size(); i++)
+			{
+				$$->code += "\tpush " + send_arg_list[i] + "\n";
+			}
+
+			$$->code += "\tcall " + symbol->getSymbol() + "\n";
+
+			if($$->getSelfType() != "void")
+			{
+				$$->code += "\tpop " + temp_asm_var + "\n";
+			}
+			
+			$$->setSymbol(temp_asm_var);
+			
+			$$->code += "\tpop mem_add\n\t";
+		}
+
+		send_arg_list.clear();
 		arg_list.clear();
 
 		fprintf(log_file, "%s(%s)\n\n", $1->getName().c_str(), $3->getName().c_str() );
@@ -1845,6 +2225,15 @@ factor	: variable {
 		fprintf(log_file, "(%s)\n\n", $2->getName().c_str() );
 
 
+		if(error_count == 0)
+		{
+			$$->code += $2->code;
+
+			$$->setSymbol($2->getSymbol());
+
+		}
+		
+
 	}
 	| CONST_INT {
 
@@ -1854,6 +2243,9 @@ factor	: variable {
 		fprintf(log_file, "%s\n\n", $1->getName().c_str() );
 
 		$$->setSelfType("int");
+
+		$$->setSymbol($1->getName());
+
 
 	}
 	| CONST_FLOAT {
@@ -1865,6 +2257,9 @@ factor	: variable {
 
 		$$->setSelfType("float");
 
+		$$->setSymbol($1->getName());
+
+
 	}
 	| variable INCOP {
 
@@ -1874,6 +2269,26 @@ factor	: variable {
 		fprintf(log_file, "%s++\n\n", $1->getName().c_str() );
 
 		$$->setSelfType($1->getSelfType());
+
+
+		string temp_asm_var = newTemp();
+		data_segment.push_back(temp_asm_var + " dw ?");
+
+		$$->code += $1->code;
+
+		if($1->getVarType() == "var")
+		{
+
+			$$->code += "\tmov bx, " + $1->getSymbol() + "\n\tmov " + temp_asm_var + ", bx\n\tinc " + $1->getSymbol() + "\n";
+
+		}
+		else {
+
+
+			$$->code += "\mov bx, " + $1->getSymbol() + "[si]\n\tmov " + temp_asm_var + ", bx\n\tinc " + $1->getSymbol() + "[si]\n";
+			
+
+		}
 
 	}
 	| variable DECOP {
@@ -1885,6 +2300,26 @@ factor	: variable {
 
 		$$->setSelfType($1->getSelfType());
 
+
+		string temp_asm_var = newTemp();
+		data_segment.push_back(temp_asm_var + " dw ?");
+
+		$$->code += $1->code;
+
+		if($1->getVarType() == "var")
+		{
+			
+			$$->code += "\tmov bx, " + $1->getSymbol() + "\n\tmov " + temp_asm_var + ", bx\n\tdec " + $1->getSymbol() + "\n";
+
+		}
+		else {
+
+			$$->code += "\tmov bx, " + $1->getSymbol() + "[si]\n\tmov " + temp_asm_var + ", bx\n\tdec " + $1->getSymbol() + "[si]\n";
+
+		}
+
+		$$->setSymbol(temp_asm_var);
+
 	}
 	;
 
@@ -1894,6 +2329,8 @@ argument_list : arguments {
 		fprintf(log_file, "Line %d: argument_list : arguments\n\n", line_count);
 
 		fprintf(log_file, "%s\n\n", $1->getName().c_str() );
+
+		$$->code += $1->code;
 
 	}
 
@@ -1927,6 +2364,14 @@ arguments : arguments COMMA logic_expression {
         	fprintf(log_file, "%s,%s\n\n", $1->getName().c_str(), $3->getName().c_str() );
 
 
+			if(error_count == 0)
+			{
+				$$->code += $1->code + $3->code;
+				send_arg_list.push_back($3->getSymbol());
+			}
+
+
+
 	}
 	      | logic_expression {
 
@@ -1946,6 +2391,13 @@ arguments : arguments COMMA logic_expression {
         	arg_list.push_back($1->getSelfType());
 
         	fprintf(log_file, "%s\n\n", $1->getName().c_str() );
+
+
+			if(error_count == 0)
+			{
+				$$->code += $1->code;
+				send_arg_list.push_back($1->getSymbol());
+			}
 
 
 	}
@@ -2002,6 +2454,11 @@ int main(int argc,char *argv[])
 	fprintf(log_file, "Total lines: %d\n", line_count);
 	fprintf(log_file, "Total errors: %d\n", error_count);
 	fprintf(error_file, "Total errors: %d\n", error_count);
+
+	cout<<"total errors: "<<error_count<<endl;
+	cout<<"total lines: "<<line_count<<endl;
+
+
 
 	fclose(in_file);
 	fclose(log_file);
